@@ -79,6 +79,41 @@ class DeliveryContractTests(unittest.TestCase):
         self.assertIn("error", result)
         self.assertIn("result", server.handle({"id": 2, "method": "ping"}))
 
+    def test_restart_after_fifth_unknown_attempt_does_not_transmit_again(self):
+        self.subscribe()
+        self.bridge.answers.append({"interaction_id": "q", "choice_id": "yes", "source": "real"})
+        self.events.post = lambda *a: (500, {})
+        self.events.pump_once()
+        state = self.events._load()
+        item = next(iter(state["outbox"].values()))
+        # The process stopped after persisting the fifth attempt, before its
+        # HTTP result could be persisted. Delivery may already have occurred.
+        item.update(attempts=5, status="unknown", nextAt=0)
+        self.events._save(state)
+        restarted = DeviceAnswerEvents(self.bridge, self.events.path)
+        restarted.post = MagicMock(return_value=(200, {}))
+        self.assertEqual(restarted.pump_once(), 0)
+        restarted.post.assert_not_called()
+        recovered = next(iter(restarted._load()["outbox"].values()))
+        self.assertEqual(recovered["status"], "terminal")
+        self.assertEqual(recovered["attempts"], 5)
+
+    def test_restart_unknown_attempt_below_limit_can_retry(self):
+        self.subscribe()
+        self.bridge.answers.append({"interaction_id": "q", "choice_id": "yes", "source": "real"})
+        self.events.post = lambda *a: (500, {})
+        self.events.pump_once()
+        state = self.events._load()
+        next(iter(state["outbox"].values())).update(attempts=4, status="unknown", nextAt=0)
+        self.events._save(state)
+        restarted = DeviceAnswerEvents(self.bridge, self.events.path)
+        restarted.post = MagicMock(return_value=(200, {}))
+        self.assertEqual(restarted.pump_once(), 1)
+        restarted.post.assert_called_once()
+        recovered = next(iter(restarted._load()["outbox"].values()))
+        self.assertEqual(recovered["status"], "sent")
+        self.assertEqual(recovered["attempts"], 5)
+
 
 if __name__ == "__main__":
     unittest.main()

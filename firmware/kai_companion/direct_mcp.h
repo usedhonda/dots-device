@@ -9,14 +9,18 @@ class DirectMCP {
   Preferences storage;
   JsonDocument state;
   DirectEvents events;
+  bool ready = false;
   void begin(const char *ca, const char *subscription) {
-    storage.begin("kai-direct", false);
-    String saved=storage.getString("state", "{}");
-    if(deserializeJson(state,saved))state.clear();
+    ready = storage.begin("kai-direct", false);
+    if (ready) {
+      String saved=storage.getString("state", "{}");
+      ready = !deserializeJson(state,saved) && state.is<JsonObject>();
+    }
+    if (!ready) state.clear(); // Preserve unreadable NVS; never replace it.
     events.begin(ca);
     JsonDocument sub; if(!deserializeJson(sub,subscription))events.provision(sub.as<JsonVariantConst>());
   }
-  bool save(){String value;serializeJson(state,value);return storage.putString("state",value)==value.length();}
+  bool save(){if(!ready)return false;String value;serializeJson(state,value);return storage.putString("state",value)==value.length();}
   bool restore(const String &snapshot) {
     state.clear();
     return !deserializeJson(state, snapshot);
@@ -45,6 +49,7 @@ class DirectMCP {
     return count;
   }
   bool select(const String &qid,const String &cid,const String &rid) {
+    if (!ready) return false;
     String snapshot;serializeJson(state,snapshot);
     JsonObject q=state["question"].as<JsonObject>();
     if(q["id"]!=qid||q["status"]!="pending")return false;
@@ -94,8 +99,10 @@ class DirectMCP {
       JsonObject value=result["structuredContent"].to<JsonObject>();
       if(name=="device_status") {
         value["status"]="online";value["transport"]="esp32-direct";value["wifi_rssi"]=WiFi.RSSI();value["uptime_ms"]=millis();value["free_heap"]=ESP.getFreeHeap();
+        value["storage_ready"]=ready;
         events.status(value["events"].to<JsonObject>());
-      }else if(name=="device_publish_question") {
+      }else if(!ready) {error=-32000;message="Device storage unavailable";}
+      else if(name=="device_publish_question") {
         String id=args["question_id"]|"",text=args["text"]|"";JsonArrayConst choices=args["choices"].as<JsonArrayConst>();
         bool valid=id.length()>0&&id.length()<=128&&text.length()>0&&text.length()<=4096&&choices.size()>=1&&choices.size()<=4&&validChoices(choices);
         JsonVariantConst current=state["question"];
