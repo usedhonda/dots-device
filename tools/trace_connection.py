@@ -17,6 +17,9 @@ from pathlib import Path
 NUMERIC_FIELDS = {
     'health': {'wifi', 'wifi_status', 'wifi_disconnect_reason',
                'wifi_disconnect_count', 'wifi_last_disconnect_ms', 'rssi',
+               'wifi_first_connected_ms', 'wifi_first_got_ip_ms',
+               'first_valid_clock_ms', 'first_tunnel_poll_ms',
+               'wifi_reconnect_attempts', 'wifi_reconnect_failed_calls', 'min_heap',
                'heap', 'uptime_ms', 'reset_reason', 'last_http',
                'bridge_task_created', 'imu', 'touch', 'touch_samples', 'gestures'},
     'direct': {'http', 'polls', 'commands', 'responses', 'failures',

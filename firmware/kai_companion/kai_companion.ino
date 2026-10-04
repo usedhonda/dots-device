@@ -94,6 +94,9 @@ static int lastHttpCode = 0;
 static uint32_t wifiDisconnectCount = 0;
 static uint32_t wifiLastDisconnectMs = 0;
 static uint8_t wifiLastDisconnectReason = 0;
+static uint32_t wifiFirstConnectedMs = 0, wifiFirstGotIpMs = 0;
+static uint32_t firstValidClockMs = 0, firstTunnelPollMs = 0;
+static uint32_t wifiReconnectAttempts = 0, wifiReconnectFailedCalls = 0;
 static bool bridgeTaskCreated = false;
 static TaskHandle_t bridgeTaskHandle=nullptr;
 static String pendingCommand = "";
@@ -116,11 +119,19 @@ static constexpr int ANSWER_X=204, ANSWER_W=104, ANSWER_Y=12, ANSWER_H=60, ANSWE
 static int questionMaxScroll(){return max(0,(questionLineCount-QUESTION_LINES)*QUESTION_LEADING);}
 
 static void wifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
-  if (event != ARDUINO_EVENT_WIFI_STA_DISCONNECTED) return;
+  if (event != ARDUINO_EVENT_WIFI_STA_DISCONNECTED &&
+      event != ARDUINO_EVENT_WIFI_STA_CONNECTED &&
+      event != ARDUINO_EVENT_WIFI_STA_GOT_IP) return;
   xSemaphoreTake(stateLock, portMAX_DELAY);
-  ++wifiDisconnectCount;
-  wifiLastDisconnectReason = info.wifi_sta_disconnected.reason;
-  wifiLastDisconnectMs = millis();
+  if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
+    if (!wifiFirstConnectedMs) wifiFirstConnectedMs = millis();
+  } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+    if (!wifiFirstGotIpMs) wifiFirstGotIpMs = millis();
+  } else {
+    ++wifiDisconnectCount;
+    wifiLastDisconnectReason = info.wifi_sta_disconnected.reason;
+    wifiLastDisconnectMs = millis();
+  }
   xSemaphoreGive(stateLock);
 }
 
@@ -818,12 +829,21 @@ static void directTask() {
       xSemaphoreGive(stateLock);directRefresh();
     }
     if(WiFi.status()!=WL_CONNECTED) {
-      if(!WiFi.STA.connected()&&millis()-wifiAttempt>15000){WiFi.reconnect();wifiAttempt=millis();}
+      if(!WiFi.STA.connected()&&millis()-wifiAttempt>15000){
+        bool reconnectStarted=WiFi.reconnect();
+        xSemaphoreTake(stateLock,portMAX_DELAY);
+        ++wifiReconnectAttempts;if(!reconnectStarted)++wifiReconnectFailedCalls;
+        xSemaphoreGive(stateLock);
+        wifiAttempt=millis();
+      }
       xSemaphoreTake(stateLock,portMAX_DELAY);bridgeStatus="offline";xSemaphoreGive(stateLock);
       vTaskDelay(pdMS_TO_TICKS(500));continue;
     }
     wifiAttempt=millis();
     if(time(nullptr)<1700000000){vTaskDelay(pdMS_TO_TICKS(500));continue;}
+    xSemaphoreTake(stateLock,portMAX_DELAY);
+    if(!firstValidClockMs)firstValidClockMs=millis();
+    xSemaphoreGive(stateLock);
     JsonVariantConst answer=directMCP.state["answer"];
     if(!answer.isNull()&&answer["receipt_id"].isNull())directMCP.events.enqueue(answer["interaction_id"].as<String>(),answer["choice_id"].as<String>(),answer["request_id"].as<String>(),answer["selected_at"].as<int64_t>());
     directMCP.events.pump();
@@ -834,7 +854,7 @@ static void directTask() {
     auto status=directTunnel->status();
     xSemaphoreTake(stateLock,portMAX_DELAY);
     lastHttpCode=status.httpCode;
-    if(ok){lastBridgeMs=millis();bridgeStatus="online";stateSuccesses++;}
+    if(ok){lastBridgeMs=millis();if(!firstTunnelPollMs)firstTunnelPollMs=lastBridgeMs;bridgeStatus="online";stateSuccesses++;}
     else {stateFailures++;bridgeStatus=(lastBridgeMs&&millis()-lastBridgeMs<15000)?"online":"offline";}
     xSemaphoreGive(stateLock);
     directRefresh();
@@ -854,7 +874,10 @@ static void bridgeTask(void *) {
     if(WiFi.status()!=WL_CONNECTED) {
       if(!WiFi.STA.connected() && millis()-wifiAttempt>15000){
         measurementSample("reconnect");
-        WiFi.reconnect();
+        bool reconnectStarted=WiFi.reconnect();
+        xSemaphoreTake(stateLock,portMAX_DELAY);
+        ++wifiReconnectAttempts;if(!reconnectStarted)++wifiReconnectFailedCalls;
+        xSemaphoreGive(stateLock);
         wifiAttempt=millis();
       }
       xSemaphoreTake(stateLock,portMAX_DELAY);bridgeStatus="offline";xSemaphoreGive(stateLock);
@@ -978,7 +1001,7 @@ static void serialCommand(String line) {
   if(line=="health") {
     xSemaphoreTake(stateLock,portMAX_DELAY);
     wl_status_t wifiStatus=WiFi.status();
-    Serial.printf("{\"type\":\"health\",\"page\":%u,\"menu\":%u,\"theme\":\"%s\",\"dark\":%s,\"wifi\":%d,\"wifi_status\":%d,\"wifi_disconnect_reason\":%u,\"wifi_disconnect_count\":%lu,\"wifi_last_disconnect_ms\":%lu,\"rssi\":%d,\"imu\":%d,\"touch\":%d,\"touch_samples\":%lu,\"gestures\":%lu,\"x\":%.1f,\"heap\":%u,\"uptime_ms\":%lu,\"reset_reason\":%d,\"last_http\":%d,\"bridge_task_created\":%s,\"bridge\":\"%s\",\"command_status\":\"%s\",\"request_id\":\"%s\",\"simulated\":%s}\n",page,menuPage,darkTheme?"dark":"normal",darkTheme?"true":"false",wifiStatus==WL_CONNECTED,wifiStatus,(unsigned)wifiLastDisconnectReason,(unsigned long)wifiDisconnectCount,(unsigned long)wifiLastDisconnectMs,wifiStatus==WL_CONNECTED?WiFi.RSSI():0,imuReady,touchReady,(unsigned long)touchSamples,(unsigned long)gestureCount,characterX,ESP.getFreeHeap(),(unsigned long)millis(),(int)esp_reset_reason(),lastHttpCode,bridgeTaskCreated?"true":"false",bridgeStatus.c_str(),commandStatus.c_str(),commandId.c_str(),simulated?"true":"false");
+    Serial.printf("{\"type\":\"health\",\"page\":%u,\"menu\":%u,\"theme\":\"%s\",\"dark\":%s,\"wifi\":%d,\"wifi_status\":%d,\"wifi_disconnect_reason\":%u,\"wifi_disconnect_count\":%lu,\"wifi_last_disconnect_ms\":%lu,\"wifi_first_connected_ms\":%lu,\"wifi_first_got_ip_ms\":%lu,\"first_valid_clock_ms\":%lu,\"first_tunnel_poll_ms\":%lu,\"wifi_reconnect_attempts\":%lu,\"wifi_reconnect_failed_calls\":%lu,\"min_heap\":%u,\"rssi\":%d,\"imu\":%d,\"touch\":%d,\"touch_samples\":%lu,\"gestures\":%lu,\"x\":%.1f,\"heap\":%u,\"uptime_ms\":%lu,\"reset_reason\":%d,\"last_http\":%d,\"bridge_task_created\":%s,\"bridge\":\"%s\",\"command_status\":\"%s\",\"request_id\":\"%s\",\"simulated\":%s}\n",page,menuPage,darkTheme?"dark":"normal",darkTheme?"true":"false",wifiStatus==WL_CONNECTED,wifiStatus,(unsigned)wifiLastDisconnectReason,(unsigned long)wifiDisconnectCount,(unsigned long)wifiLastDisconnectMs,(unsigned long)wifiFirstConnectedMs,(unsigned long)wifiFirstGotIpMs,(unsigned long)firstValidClockMs,(unsigned long)firstTunnelPollMs,(unsigned long)wifiReconnectAttempts,(unsigned long)wifiReconnectFailedCalls,ESP.getMinFreeHeap(),wifiStatus==WL_CONNECTED?WiFi.RSSI():0,imuReady,touchReady,(unsigned long)touchSamples,(unsigned long)gestureCount,characterX,ESP.getFreeHeap(),(unsigned long)millis(),(int)esp_reset_reason(),lastHttpCode,bridgeTaskCreated?"true":"false",bridgeStatus.c_str(),commandStatus.c_str(),commandId.c_str(),simulated?"true":"false");
     xSemaphoreGive(stateLock);return;
   }
   if (line == "screenshot") { serialScreenshot(); return; }
