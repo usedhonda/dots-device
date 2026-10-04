@@ -10,6 +10,69 @@ class DirectMCP {
   JsonDocument state;
   DirectEvents events;
   bool ready = false;
+  // Delivery diagnostics stay in bounded RAM and never retain tool arguments.
+  uint32_t successfulSummaryCount = 0;
+  uint32_t lastSummaryUptimeMs = 0;
+  bool lastSummaryTimeKnown = false;
+  String lastToolName;
+  String lastToolResult;
+  uint32_t lastToolUptimeMs = 0;
+  bool lastToolTimeKnown = false;
+
+  void diagnostics(JsonObject out) const {
+    out["display_kind"] = state["display_kind"] | "";
+    out["summary_id"] = state["summary_id"] | "";
+    out["question_status"] = state["question"]["status"] | "none";
+    JsonVariantConst question = state["question"];
+    JsonVariantConst answer = state["answer"];
+    out["answer_pending_receipt"] = question["status"] == "selected" &&
+      (answer.isNull() || answer["receipt_id"].isNull());
+    if (lastToolTimeKnown) {
+      out["last_tool"] = lastToolName;
+      out["last_tool_result"] = lastToolResult;
+      out["last_tool_ms"] = lastToolUptimeMs;
+      out["last_tool_age_ms"] = static_cast<uint32_t>(millis()) - lastToolUptimeMs;
+    } else {
+      out["last_tool"] = nullptr;
+      out["last_tool_result"] = nullptr;
+      out["last_tool_ms"] = nullptr;
+      out["last_tool_age_ms"] = nullptr;
+    }
+    out["successful_summary_count"] = successfulSummaryCount;
+    if (lastSummaryTimeKnown) {
+      out["last_summary_ms"] = lastSummaryUptimeMs;
+      out["last_summary_age_ms"] = static_cast<uint32_t>(millis()) - lastSummaryUptimeMs;
+      out["last_summary_time_status"] = "known";
+    } else {
+      out["last_summary_ms"] = nullptr;
+      out["last_summary_age_ms"] = nullptr;
+      out["last_summary_time_status"] = "unknown_after_restart";
+    }
+  }
+
+ private:
+  static String bounded(const String &value, size_t limit) {
+    String result;
+    for (size_t i = 0; i < value.length() && i < limit; ++i) result += value[i];
+    return result;
+  }
+
+  void recordTool(const String &name, bool error, const char *message) {
+    if (name == "device_status" || name == "device_read_answer") return;
+    lastToolName = bounded(name, 48);
+    lastToolResult = error ? String("error:") + bounded(String(message), 56) : "ok";
+    lastToolResult = bounded(lastToolResult, 64);
+    lastToolUptimeMs = millis();
+    lastToolTimeKnown = true;
+  }
+
+  void recordSummarySuccess() {
+    if (successfulSummaryCount != UINT32_MAX) ++successfulSummaryCount;
+    lastSummaryUptimeMs = millis();
+    lastSummaryTimeKnown = true;
+  }
+
+ public:
   void begin(const char *ca, const char *subscription) {
     ready = storage.begin("kai-direct", false);
     if (ready) {
@@ -100,6 +163,7 @@ class DirectMCP {
       if(name=="device_status") {
         value["status"]="online";value["transport"]="esp32-direct";value["wifi_rssi"]=WiFi.RSSI();value["uptime_ms"]=millis();value["free_heap"]=ESP.getFreeHeap();
         value["storage_ready"]=ready;
+        diagnostics(value);
         events.status(value["events"].to<JsonObject>());
       }else if(!ready) {error=-32000;message="Device storage unavailable";}
       else if(name=="device_publish_question") {
@@ -132,13 +196,13 @@ class DirectMCP {
             state["summary"]=text;
             state["display_kind"]="summary";
             if(!save()){restore(snapshot);error=-32000;message="Summary persistence failed";}
-            else {value["status"]="shown";value["id"]=id;value["summary_id"]=id;value["idempotent"]=true;}
+            else {recordSummarySuccess();value["status"]="shown";value["id"]=id;value["summary_id"]=id;value["idempotent"]=true;}
           }
         } else {
           String snapshot;serializeJson(state,snapshot);
           state["summary_id"]=id;state["summary_text"]=text;state["summary"]=text;state["display_kind"]="summary";
           if(!save()){restore(snapshot);error=-32000;message="Summary persistence failed";}
-          else {value["status"]="shown";value["id"]=id;value["summary_id"]=id;}
+          else {recordSummarySuccess();value["status"]="shown";value["id"]=id;value["summary_id"]=id;}
         }
       }else if(name=="device_read_answer") {
         JsonArray a=value["answers"].to<JsonArray>();
@@ -165,6 +229,7 @@ class DirectMCP {
           else value["status"]="received";
         }
       }else{error=-32602;message="Unknown tool";}
+      recordTool(name, error != 0, message);
       JsonObject c=result["content"].to<JsonArray>().add<JsonObject>();c["type"]="text";c["text"]="Device operation completed.";
     }else{error=-32601;message="Method not found";}
     if(error){out.remove("result");out["error"]["code"]=error;out["error"]["message"]=message;}

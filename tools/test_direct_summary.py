@@ -64,6 +64,18 @@ int main(){
   assert(m.state["summary"]=="進めてるよ");
   assert(m.state["display_kind"]=="summary");
   assert(m.state["answer"]["receipt_id"]=="r");
+  JsonDocument diagArgs;
+  auto diagDoc=call(m,"device_status",diagArgs);
+  auto diag=diagDoc["result"]["structuredContent"].as<JsonObject>();
+  // Status polling must not overwrite the last meaningful tool record.
+  assert(diag["display_kind"]=="summary");assert(diag["summary_id"]=="s");
+  assert(diag["answer_pending_receipt"]==false);
+  assert(diag["last_tool"]=="device_publish_summary");assert(diag["last_tool_result"]=="ok");
+  assert(diag["successful_summary_count"]==2);assert(diag["last_summary_time_status"]=="known");
+  DirectMCP rebooted;rebooted.storage.stored=m.storage.stored;rebooted.begin("","{}");
+  auto bootDiag=call(rebooted,"device_status",diagArgs);
+  assert(bootDiag["result"]["structuredContent"]["last_summary_time_status"]=="unknown_after_restart");
+  assert(bootDiag["result"]["structuredContent"]["last_summary_ms"].isNull());
   a["text"]="別の文";
   assert(call(m,"device_publish_summary",a)["error"]["code"]==-32602);
   String glyphs;for(int i=0;i<24;i++)glyphs+="あ";

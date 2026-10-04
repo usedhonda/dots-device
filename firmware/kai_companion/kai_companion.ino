@@ -89,6 +89,8 @@ static bool touchReady = false;
 static bool simulated = false;
 static String bridgeSummary = "Macへの接続を待っています";
 static String directReceiptDisplay = "";
+static uint8_t settingsView = 0;
+static JsonDocument deliveryDiagnostics;
 static String bridgeStatus = "offline";
 static int lastHttpCode = 0;
 static uint32_t wifiDisconnectCount = 0;
@@ -451,7 +453,36 @@ static void drawPage(int index,int offset,const String& summary,const String& in
   if(index==0){drawBubble(offset,summary);drawKai(offset);return;}
   if(index==MAX_PAGE) {
     JapaneseUI::selectFont(gfx,true);
-    JapaneseUI::draw(gfx,"設定",offset+12,34,themeText(),true);
+    const char *tabs[4]={"テーマ","状態","回答","ログ"};
+    for(int i=0;i<4;i++) {
+      gfx->fillRoundRect(offset+8+i*77,25,73,30,8,settingsView==i?themeCard():themeBackground());
+      JapaneseUI::draw(gfx,tabs[i],offset+14+i*77,29,themeText(),true);
+    }
+    if(settingsView) {
+      String rows[4];
+      xSemaphoreTake(stateLock,portMAX_DELAY);
+      if(settingsView==1) {
+        rows[0]=String("Wi-Fi ")+(WiFi.status()==WL_CONNECTED?String(WiFi.RSSI())+" dBm":"未接続");
+        rows[1]=String("通信 ")+bridgeStatus+" / "+String(lastHttpCode);
+        uint32_t received=deliveryDiagnostics["last_summary_ms"]|0;
+        rows[2]=String("要約 ")+(received?String((millis()-received)/1000)+"秒前":"起動後の受信なし");
+        rows[3]=String("回答 ")+(deliveryDiagnostics["answer_pending_receipt"]==true?"受領待ち":(interactionReceived?"受領済み":"none"));
+      } else if(settingsView==2) {
+        rows[0]=String("質問 ")+(deliveryDiagnostics["question_status"]|"none");
+        rows[1]=String("イベント ")+(deliveryDiagnostics["events"]["outbox"]|"none");
+        rows[2]=String("試行 ")+String(deliveryDiagnostics["events"]["attempts"]|0)+" / HTTP "+String(deliveryDiagnostics["events"]["lastHttp"]|0);
+        rows[3]=String("受領 ")+(deliveryDiagnostics["answer_pending_receipt"]==true?"待ち":(interactionReceived?"受領済み":"none"));
+      } else {
+        rows[0]=String("切断 ")+wifiDisconnectCount+" 理由 "+wifiLastDisconnectReason;
+        rows[1]=String("再接続 ")+wifiReconnectAttempts+" 失敗 "+wifiReconnectFailedCalls;
+        rows[2]=String("更新 ")+(deliveryDiagnostics["last_tool"]|"none");
+        rows[2].replace("device_","");
+        rows[3]=String("結果 ")+(String(deliveryDiagnostics["last_tool_result"]|"unknown").startsWith("error")?"error":(deliveryDiagnostics["last_tool_result"]|"unknown"))+" / heap "+String(ESP.getFreeHeap()/1024)+"K";
+      }
+      xSemaphoreGive(stateLock);
+      for(int i=0;i<4;i++)JapaneseUI::draw(gfx,rows[i],offset+10,63+i*22,themeText());
+      return;
+    }
     JapaneseUI::draw(gfx,"テーマ",offset+12,62,darkTheme?rgb565(0xAAB4C5):rgb565(0x5A6475),true);
     const char *themeLabels[2]={"ノーマル","ダーク"};
     for(int i=0;i<2;i++) {
@@ -619,6 +650,8 @@ static void handleTap(int x,int y,bool isSimulated) {
   simulated=isSimulated;lastTouchMs=millis();gestureCount++;
   if(settling||dragging)return;
   if(page==SETTINGS) {
+    if(y>=25&&y<=55){settingsView=constrain((x-8)/77,0,3);render();return;}
+    if(settingsView)return;
     if(y>=78&&y<=126&&x>=12&&x<=308&&!(x>154&&x<166)) {
       bool nextDark=x>=166;
       if(darkTheme!=nextDark){darkTheme=nextDark;preferences.putBool("dark",darkTheme);render();}
@@ -789,6 +822,9 @@ static KaiDirectTunnel *directTunnel=nullptr;
 static void directRefresh() {
   JsonVariantConst q=directMCP.state["question"];
   xSemaphoreTake(stateLock,portMAX_DELAY);
+  deliveryDiagnostics.clear();
+  directMCP.diagnostics(deliveryDiagnostics.to<JsonObject>());
+  directMCP.events.status(deliveryDiagnostics["events"].to<JsonObject>());
   String id=q["id"]|"";
   if(id.length()) {
     if(id!=interactionId){interactionArrived=q["status"]=="pending";choiceSendStatus="";choiceSendId="";}
@@ -983,6 +1019,14 @@ static void bridgeTask(void *) {
 static void serialCommand(String line) {
   line.trim(); if (!line.length()) return;
   if(line=="home"){setPageIndex(0);scrollX=0;settling=dragging=fingerDown=false;simulated=false;injectedUntil=0;render();return;}
+  if(line=="diagnostics") {
+    xSemaphoreTake(stateLock,portMAX_DELAY);
+    JsonDocument d;d.set(deliveryDiagnostics);d["type"]="diagnostics";
+    d["wifi_connected"]=WiFi.status()==WL_CONNECTED;d["wifi_disconnect_reason"]=wifiLastDisconnectReason;
+    d["wifi_disconnect_count"]=wifiDisconnectCount;d["tunnel_http"]=lastHttpCode;
+    if(lastBridgeMs)d["tunnel_age_ms"]=millis()-lastBridgeMs;else d["tunnel_age_ms"]=nullptr;
+    serializeJson(d,Serial);Serial.println();xSemaphoreGive(stateLock);return;
+  }
   if(line=="power") {
     Serial.printf("{\"type\":\"power\",\"tx_power_qdbm\":%d,\"backlight_pwm\":%lu,\"battery_mv\":%lu}\n",(int)WiFi.getTxPower(),(unsigned long)ledcRead(GFX_BL),(unsigned long)analogReadMilliVolts(0)*3);
     return;
@@ -1091,7 +1135,7 @@ void loop() {
       }else if(hardwareDown){hardwareDown=false;pointerUp();}
     }
   }
-  if(page!=HOME&&!(targetPage>=3&&targetPage<MAX_PAGE)&&!fingerDown&&!settling&&(uint32_t)(millis()-lastTouchMs)>15000)slideTo(0);
+  if(page!=HOME&&!(page==SETTINGS&&settingsView)&&!(targetPage>=3&&targetPage<MAX_PAGE)&&!fingerDown&&!settling&&(uint32_t)(millis()-lastTouchMs)>15000)slideTo(0);
   updateSlide();
   if(now-lastFrameMs>=25){lastFrameMs=now;render();}
   if (millis() - lastTelemetryMs > 3000) { lastTelemetryMs = millis(); Serial.printf("{\"type\":\"telemetry\",\"ax\":%.3f,\"ay\":%.3f,\"az\":%.3f,\"gx\":%.3f,\"gy\":%.3f,\"gz\":%.3f,\"simulated\":%s}\n", accelData.accelX, accelData.accelY, accelData.accelZ, gyroData.gyroX, gyroData.gyroY, gyroData.gyroZ, simulated ? "true" : "false"); }
