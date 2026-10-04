@@ -91,6 +91,12 @@ and clock gates allow network delivery; this is not a synchronous UI durability
 guarantee. A local selected display is therefore separate from webhook
 acceptance, Dot reading, ordinary-chat delivery, and receipt persistence.
 
+If the answer-state NVS namespace cannot open or its saved JSON is unreadable
+or is not an object, `device_status` reports `storage_ready: false`. Answer
+reads and writes return `Device storage unavailable`; the saved state is
+preserved rather than overwritten by a new question. This requires storage
+diagnosis, not automatic republishing or a receipt for an unavailable answer.
+
 The device accepts 1–4 choices per question and presents at most two choices
 per page. Question ID and text are limited
 to 128 and 4096 UTF-8 bytes respectively. Each choice has a unique `id` of at
