@@ -18,7 +18,7 @@ NUMERIC_FIELDS = {
     'health': {'wifi', 'wifi_status', 'wifi_disconnect_reason',
                'wifi_disconnect_count', 'wifi_last_disconnect_ms', 'rssi',
                'heap', 'uptime_ms', 'reset_reason', 'last_http',
-               'bridge_task_created'},
+               'bridge_task_created', 'imu', 'touch', 'touch_samples', 'gestures'},
     'direct': {'http', 'polls', 'commands', 'responses', 'failures',
                'heap', 'min_heap'},
     'link': {'wifi_sleep', 'successes', 'failures', 'age_ms', 'http', 'heap'},
