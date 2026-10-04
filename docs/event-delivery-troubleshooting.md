@@ -26,6 +26,16 @@ Store diagnostics in ignored local files. Do not publish credentials, subscripti
 
 ## Owner-conversation availability failure
 
+Several durable conversations can share the same Dot title while serving different roles:
+
+| Conversation role | Evidence to identify it |
+| --- | --- |
+| Normal-chat root | The intended owner binding and ordinary user delivery context; successful normal message delivery can establish this route |
+| Event automation receiver | The matching webhook/automation invocation and event delivery context |
+| Developer diagnostic thread | Diagnostic tool calls and developer context; access here does not establish the owner's route |
+
+Select by role, owner binding and delivery context, not title or recency. A normal message can succeed in the normal-chat root while a developer thread reports the error below. An event automation receiver can be separate from both. These observations narrow the diagnosis but do not establish the actual callback mapping: correlate the affected event to its receiver and owner target before naming the root cause.
+
 An observed error is:
 
 ```text

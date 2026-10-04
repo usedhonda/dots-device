@@ -25,7 +25,7 @@ The current hardware target is **Waveshare ESP32-C6-Touch-LCD-1.47**. It uses a 
 2. [Architecture and communication flow](docs/architecture.md): How a question arrives from the Dot and an answer returns, with a map of the source files to read.
 3. [Instruction template for the Dot](docs/dot-instructions.md): Summaries, choices, answer receipt, and what to do when a connection cannot be made.
 4. [Replacing the character](docs/character-assets.md): Sprite dimensions and four animation slots.
-5. [Troubleshooting](docs/troubleshooting.md): Isolating Wi-Fi, reception, answer delays, tilt, and power issues.
+5. [Troubleshooting](docs/troubleshooting.md): Isolating Wi-Fi, reception, answer delays, tilt, and power issues. [Accepted events and unavailable Dot chat](docs/event-delivery-troubleshooting.md): Tracing receiver and conversation delivery separately.
 6. [Third-party libraries and sources](docs/third-party-inventory.md) / [Remaining public-release work](docs/public-readiness.md).
 
 Several of the linked guides remain in Japanese.
