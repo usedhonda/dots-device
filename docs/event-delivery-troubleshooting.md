@@ -26,7 +26,7 @@ Store diagnostics in ignored local files. Do not publish credentials, subscripti
 
 ## Owner-conversation availability failure
 
-Several durable conversations can share the same Dot title while serving different roles:
+Several durable conversations can share the same Dot title. Identify the following roles or contexts; they can overlap within one thread:
 
 | Conversation role | Evidence to identify it |
 | --- | --- |
@@ -34,7 +34,7 @@ Several durable conversations can share the same Dot title while serving differe
 | Event automation receiver | The matching webhook/automation invocation and event delivery context |
 | Developer diagnostic thread | Diagnostic tool calls and developer context; access here does not establish the owner's route |
 
-Select by role, owner binding and delivery context, not title or recency. A normal message can succeed in the normal-chat root while a developer thread reports the error below. An event automation receiver can be separate from both. These observations narrow the diagnosis but do not establish the actual callback mapping: correlate the affected event to its receiver and owner target before naming the root cause.
+Select by role, owner binding and delivery context, not title or recency. The actual Dot selected through the supported Dot UI and successful owner-conversation use are stronger mapping evidence than a matching title. A normal message can succeed there while an older Dot instance or developer context reports the error below. Automation runs may appear in that same current conversation or a separate receiver context. These observations narrow the diagnosis but do not establish the actual callback mapping: correlate the affected event to its receiver and owner target before naming the root cause.
 
 An observed error is:
 
