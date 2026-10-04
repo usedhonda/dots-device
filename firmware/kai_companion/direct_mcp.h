@@ -51,12 +51,14 @@ class DirectMCP {
     bool found=false;for(JsonObject c:q["choices"].as<JsonArray>())if(c["id"]==cid)found=true;
     if(!found)return false;
     q["status"]="selected";q["selected_choice_id"]=cid;
+    const time_t selectedAt=time(nullptr);
     JsonObject a=state["answer"].to<JsonObject>();
     a["interaction_id"]=qid;a["choice_id"]=cid;a["request_id"]=rid;
-    a["origin_request_id"]=qid;a["source"]="real";a["selected_at"]=(int64_t)time(nullptr);
+    a["origin_request_id"]=qid;a["source"]="real";
+    a["selected_at"]=selectedAt>=1700000000?(int64_t)selectedAt:(int64_t)0;
     a["receipt_id"]=nullptr;a["receipt_summary"]=nullptr;
     if(!save()){restore(snapshot);return false;}
-    events.enqueue(qid,cid,rid,(int64_t)time(nullptr));
+    events.enqueue(qid,cid,rid,selectedAt>=1700000000?(int64_t)selectedAt:(int64_t)0);
     return true;
   }
   String handle(JsonVariantConst rpc) {

@@ -25,13 +25,14 @@ class KaiDirectTunnel {
   const Status& status() const { return status_; }
   // Returns false on transport/protocol failure. No credentials or RPC payload
   // are exposed in status. Failed delivery remains pending for the next call.
-  bool pollOnce(const Handler& handler) {
+  bool pollOnce(const Handler& handler, uint32_t timeoutMs=5000) {
     status_.freeHeap=ESP.getFreeHeap();
     if (!pending_.isEmpty()) return deliver();
     if (!handler || !configured()) return fail();
     if (backlog_.isEmpty()) {
     NetworkClientSecure tls; HTTPClient http;
-    if (!begin(tls,http,"/poll?limit=1&timeout_ms=5000")) return fail();
+    if (timeoutMs > 15000) timeoutMs = 15000;
+    if (!begin(tls,http,"/poll?limit=1&timeout_ms="+String(timeoutMs))) return fail();
     if (!route_.isEmpty()) http.addHeader("X-Tunnel-Shard-Token",route_);
     const char* collected[]={"X-Tunnel-Shard-Token"};
     http.collectHeaders(collected,1);

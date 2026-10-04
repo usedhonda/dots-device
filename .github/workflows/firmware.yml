@@ -49,6 +49,7 @@ jobs:
           python tools/test_answer_tap.py
           python tools/test_idle_timeout.py
           python tools/test_direct_summary.py --arduinojson "$HOME/Arduino/libraries/ArduinoJson/src"
+          python tools/test_direct_delivery.py
           python tools/test_connection_recovery.py
           c++ -std=c++17 tools/test_bubble_layout.cpp -o /tmp/test-bubble
           /tmp/test-bubble
