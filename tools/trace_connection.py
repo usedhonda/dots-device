@@ -6,11 +6,12 @@ Store captures under an ignored local directory (for example .local/).
 import argparse
 import json
 import math
+import os
+import select
 import sys
 import time
 from pathlib import Path
 
-import serial
 
 
 NUMERIC_FIELDS = {
@@ -57,15 +58,10 @@ def main():
     if not math.isfinite(args.seconds) or not 0 < args.seconds <= 3600:
         parser.error('--seconds must be between 0 and 3600')
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    print('Opening USB can reset ESP32-C6, even with DTR/RTS false. '
+    print('Opening USB can reset ESP32-C6. '
           'This trace opens once and never resets or reopens.', file=sys.stderr)
     started = time.monotonic()
-    connection = serial.Serial()
-    connection.port = args.port
-    connection.baudrate = 115200
-    connection.timeout = 0.2
-    connection.write_timeout = 1
-    connection.dtr = connection.rts = False
+    fd = None
     try:
         with args.output.open('x', encoding='utf-8') as output:
             def record(value):
@@ -75,7 +71,8 @@ def main():
 
             record({'type': 'trace', 'event': 'opening',
                     'duration_s': args.seconds, 'usb_open_may_reset': True})
-            connection.open()
+            # Match recover_measurements: do not touch DTR/RTS or termios.
+            fd = os.open(args.port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
             record({'type': 'trace', 'event': 'opened'})
             next_query = time.monotonic()
             first_query = True
@@ -86,11 +83,13 @@ def main():
                 if now >= next_query:
                     commands = ['health', 'link', 'power'] if first_query else ['health', 'link']
                     for command in commands:
-                        connection.write((command + '\n').encode('ascii'))
+                        os.write(fd, (command + '\n').encode('ascii'))
                         record({'type': 'trace', 'event': 'query', 'command': command})
                     first_query = False
                     next_query = now + 5
-                for byte in connection.read(1024):
+                if not select.select([fd], [], [], 0.2)[0]:
+                    continue
+                for byte in os.read(fd, 1024):
                     if byte == 10:
                         if not dropping:
                             try:
@@ -110,13 +109,13 @@ def main():
     except KeyboardInterrupt:
         print('Trace interrupted; partial capture preserved.', file=sys.stderr)
         return 130
-    except (OSError, serial.SerialException):
+    except OSError:
         # Exception strings can contain paths or device data; keep them private.
         print('Trace failed; partial capture preserved. No reopen attempted.', file=sys.stderr)
         return 1
     finally:
-        if connection.is_open:
-            connection.close()
+        if fd is not None:
+            os.close(fd)
     return 0
 
 
