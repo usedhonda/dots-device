@@ -55,7 +55,7 @@ try:
                 try:
                     value = json.loads(line)
                     # Only firmware's defined diagnostics; no arbitrary serial log dump.
-                    if value.get('type') in {'health','telemetry','command','touch','boot','network','motion'}: print(json.dumps(value))
+                    if value.get('type') in {'health','telemetry','command','touch','boot','network','motion','diagnostics','link'}: print(json.dumps(value))
                 except ValueError: pass
 finally:
     os.close(fd)
