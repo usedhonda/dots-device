@@ -179,6 +179,12 @@ class DeviceAnswerEvents:
                 if sent >= 50 or item.get("status") in ("sent", "terminal", "revoked") or item.get("nextAt", 0) > now: continue
                 sub = state["subscriptions"].get(item["subscription"])
                 if not sub or sub.get("expiresAt", 0) <= now: item["status"] = "revoked"; continue
+                # An interrupted attempt is already counted: the callback may
+                # have accepted it before the process lost its HTTP result.
+                if item.get("attempts", 0) >= MAX_ATTEMPTS:
+                    item["status"] = "terminal"
+                    self._save(state)
+                    continue
                 item["attempts"] += 1; item["status"] = "unknown"; self._save(state)
                 try: status, _ = self.post(sub["url"], sub["secret"], item["payload"], item["subscription"])
                 except Exception: status = 599

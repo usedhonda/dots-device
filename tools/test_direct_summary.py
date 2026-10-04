@@ -21,8 +21,8 @@ using String=std::string;
 #define startsWith starts_with
 class Preferences {
  public:
-  bool fail=false; String stored;
-  void begin(const char*,bool) {}
+  bool fail=false,openFail=false; String stored;
+  bool begin(const char*,bool) {return !openFail;}
   String getString(const char*,const char *fallback) {return stored.empty()?fallback:stored;}
   size_t putString(const char*,const String &s) {if(fail)return 0;stored=s;return s.size();}
 };
@@ -75,6 +75,20 @@ int main(){
   m.storage.fail=true;a["summary_id"]="failed";a["text"]="保存失敗";
   assert(call(m,"device_publish_summary",a)["error"]["code"]==-32000);
   String after;serializeJson(m.state,after);assert(before==after);
+  for(const char *saved : {"{broken", "[]", "null"}) {
+    DirectMCP damaged;damaged.storage.stored=saved;
+    damaged.begin("","{}");
+    assert(!damaged.ready);
+    a.clear();a["question_id"]="replacement";a["text"]="New?";
+    a["choices"][0]["id"]="yes";a["choices"][0]["label"]="Yes";
+    assert(call(damaged,"device_publish_question",a)["error"]["code"]==-32000);
+    assert(call(damaged,"device_read_answer",a)["error"]["code"]==-32000);
+    assert(!damaged.select("replacement","yes","req"));
+    assert(!damaged.save());assert(damaged.storage.stored==saved);
+    assert(call(damaged,"device_status",a)["result"]["structuredContent"]["storage_ready"]==false);
+  }
+  DirectMCP unavailable;unavailable.storage.openFail=true;
+  unavailable.begin("","{}");assert(!unavailable.ready);assert(!unavailable.save());
   std::cout<<"PASS: pending question preserved, receipt/summary precedence, idempotent restore, Unicode limit, persistence rollback\n";
 }
 '''
