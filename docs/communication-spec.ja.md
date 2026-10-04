@@ -63,9 +63,13 @@ sequenceDiagram
   Tunnel-->>ESP: キュー済みJSON-RPC要求
   ESP->>Tunnel: received結果をpost
   Tunnel-->>Dot: receipt結果
-  Dot->>Tunnel: receipt後に任意のdevice_publish_summary
-  ESP->>Tunnel: 外向きHTTPS poll、結果をpost
-  Tunnel-->>Dot: 要約結果
+  opt 後のチャット返信に新しい要約がある
+    Dot->>Tunnel: device_publish_summary
+    ESP->>Tunnel: 外向きHTTPS poll
+    Tunnel-->>ESP: キュー済みJSON-RPC要求
+    ESP->>Tunnel: 要約結果をpost
+    Tunnel-->>Dot: 要約結果
+  end
 ```
 
 ## 状態と安全境界
@@ -134,7 +138,7 @@ receiptにはそのrequestに基づく安定した `receipt_id` を使います�
 {"question_id":"demo-food-001"}
 ```
 
-読取り結果（完全なJSON-RPCではなく `structuredContent` の形）:
+読取り結果（完全なJSON-RPCではなく `structuredContent` の抜粋）:
 
 ```json
 {"answers":[{"interaction_id":"demo-food-001","choice_id":"ramen","request_id":"req-001","source":"real","receipt_id":null}]}
@@ -159,9 +163,10 @@ receiptツール呼び出し:
 ```
 
 ファームウェアは保存済みWebhook secretで、シリアライズ済み要求バイト列そのものを
-Standard Webhooks HMAC-SHA256方式で署名します。受信側は購読中のDotを起動する
-前に、`Content-Type`、`webhook-id`（`eventId`と一致）、`webhook-timestamp`、
-`webhook-signature`、`X-MCP-Subscription-Id`を検証します。
+Standard Webhooks HMAC-SHA256方式で署名します。配送には
+`Content-Type: application/json`、`webhook-id`（`eventId`と一致）、
+`webhook-timestamp`、`webhook-signature`、`X-MCP-Subscription-Id`を付けます。
+ChatGPTは署名付き配送を検証し、イベントを非同期に処理します。
 
 ## MCP Events購読と配送
 
@@ -179,9 +184,9 @@ Standard Webhooks HMAC-SHA256方式で署名します。受信側は購読中の
 恒久的な配送失敗と5回目の失敗は `terminal` です。HTTP 408と429は、それ以外の
 4xx終端方針に対する再試行例外です。HTTP 2xxは
 callbackがリクエストを受理した証拠にすぎず、受信側の実行、Dotの読取り、
-通常チャットへの受領通知、receipt保存を証明しません。`cursor: null`による
-イベント一覧の再生はありませんが、ローカルoutboxの保留再試行は残り得ます。
-exact-once保証はなく、`eventId`／`answerId` と安定したrequest組で重複排除します。
+通常チャットへの受領通知、receipt保存を証明しません。`cursor: null`で配送し、
+過去イベントの再生はありませんが、ローカルoutboxの保留再試行は残り得ます。
+exactly-once保証はなく、`eventId`／`answerId` と安定したrequest組で重複排除します。
 
 ## 起動と設定チェックリスト
 

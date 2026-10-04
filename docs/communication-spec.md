@@ -62,9 +62,13 @@ sequenceDiagram
   Tunnel-->>ESP: queued JSON-RPC request
   ESP->>Tunnel: received result post
   Tunnel-->>Dot: receipt result
-  Dot->>Tunnel: optional separate device_publish_summary
-  ESP->>Tunnel: outbound HTTPS poll, then result post
-  Tunnel-->>Dot: summary result
+  opt A later chat reply has a new summary
+    Dot->>Tunnel: device_publish_summary
+    ESP->>Tunnel: outbound HTTPS poll
+    Tunnel-->>ESP: queued JSON-RPC request
+    ESP->>Tunnel: summary result post
+    Tunnel-->>Dot: summary result
+  end
 ```
 
 ## State and safety boundaries
@@ -73,11 +77,11 @@ The firmware retains one current question, one answer, one summary display,
 one Events subscription, and one event outbox. It is not an unlimited answer
 log. A selected answer without a receipt blocks a new question. Repeating the
 same question ID with identical text and choices is idempotent; changing its
-  content is a conflict. A summary can be sent separately, but it is not a
-  replacement for an unanswered question. The Dot instruction protects an
-  unanswered question from replacement and keeps summaries from covering it;
-  that safeguard is an instruction, not a firmware invariant, so both a
-  pending question and its display can technically be replaced.
+content is a conflict. A summary can be sent separately, but it does not
+acknowledge an answer. The Dot instruction protects an unanswered question
+from replacement and keeps summaries from covering it; that safeguard is an
+instruction, not a firmware invariant, so both a pending question and its
+display can technically be replaced.
 
 Selection validates the non-empty question ID and choice ID, marks the answer
 `real`,
@@ -139,7 +143,7 @@ Read-answer request (tool arguments):
 {"question_id":"demo-food-001"}
 ```
 
-Read-answer result (`structuredContent`, not a full JSON-RPC envelope):
+Read-answer result (an excerpt of `structuredContent`, not a full JSON-RPC envelope):
 
 ```json
 {"answers":[{"interaction_id":"demo-food-001","choice_id":"ramen","request_id":"req-001","source":"real","receipt_id":null}]}
@@ -164,10 +168,10 @@ The signed `device.answer` webhook has a payload equivalent to:
 ```
 
 The firmware signs the exact serialized request bytes using the Standard
-Webhooks HMAC-SHA256 scheme and the provisioned webhook secret. The receiver
-must verify `Content-Type`, `webhook-id` (matching `eventId`),
-`webhook-timestamp`, `webhook-signature`, and `X-MCP-Subscription-Id` before
-invoking the subscribed Dot.
+Webhooks HMAC-SHA256 scheme and the provisioned webhook secret. Deliveries include
+`Content-Type: application/json`, `webhook-id` (matching `eventId`),
+`webhook-timestamp`, `webhook-signature`, and `X-MCP-Subscription-Id`. ChatGPT
+verifies the signed delivery before processing the event asynchronously.
 
 ## MCP Events subscription and delivery
 
@@ -190,7 +194,7 @@ the callback accepted the request only. It
 does not prove that a receiver ran, that Dot read the answer, that
 ordinary-chat acknowledgement reached its destination, or that a receipt was
 persisted. Pending local outbox retries remain possible even though event
-listing uses `cursor: null` and provides no replay. There is no exact-once
+delivery uses `cursor: null` and provides no replay. There is no exactly-once
 guarantee; deduplicate by `eventId`/`answerId` and the
 stable request tuple.
 
