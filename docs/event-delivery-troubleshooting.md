@@ -48,6 +48,8 @@ If no binding-repair tool is exposed, do not invent one or edit undocumented ide
 
 ## Supported recovery, then one bounded confirmation
 
+If receiver invocation and answer reading succeed, but the question cannot be matched to a question this Dot published, hold processing under the question-scope rule. A developer-published diagnostic question does not establish Dot ownership. This is a provenance mismatch, not evidence of a subscription outage. For acceptance, have the intended Dot publish an authorized synthetic question and record its ID and choices before correlating the diagnostic answer; do not store test choices as preferences.
+
 After diagnosis identifies a stale, missing or unavailable connection, use only the service's supported plugin/Dot reconnection or conversation-selection UI for that specific connection. Preserve the answer IDs and existing subscription evidence first. If reconnection requires user authentication or a physical action, prepare the supported flow and state the one remaining action. Do not indiscriminately remove subscriptions, switch owner conversations or recreate a Dot.
 
 Reconnection is a recovery attempt, not proof. Confirm the repaired mapping and use the affected answer only if the supported workflow can safely reconcile it without duplicate processing. Otherwise, use an explicitly identified synthetic test question and answer, with new IDs and existing authorization. Never turn a test selection or diagnostic event into a user preference, stored instruction or authorization for unrelated action.
