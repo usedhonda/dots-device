@@ -1,55 +1,98 @@
 # dots-device
 
-This is an experimental project that puts a character on a small ESP32 display, receives short summaries and questions from OpenAI's Dots, and lets you answer by touch. It collects implementation examples for people who want to build their own Dots device with an ESP32, covering the display, tilt, communication, and answer round trip. This is not official OpenAI hardware or an SDK.
+A small ESP32 companion for your OpenAI Dot: an animated character, short conversation summaries, and questions you can answer by touch. Keep the main conversation in chat and use the device for a glance or a quick reply.
 
-## What can it do?
+This experimental, independent project provides firmware, character converters, example configuration, and Dot instructions. It is not official OpenAI hardware or an SDK.
 
-- Character animation. When placed flat, it settles on the left; when tilted, it moves in the direction of gravity.
-- Short Japanese summaries shown in a speech bubble. The bubble appears on the side opposite the character, disappears while the character is moving, and reappears once it settles. You can also hide or show it by tapping.
-- Questions scroll on the left, with two answer buttons at a time on the right. One tap queues an answer and returns immediately to the home screen.
-- Page navigation, icon menus, and saved light/dark themes.
-- Wi-Fi and peer-communication indicators at the bottom. Check detailed communication diagnostics on the serial side.
-- A direct HTTPS connection over Wi-Fi. The direct mode does not require a Mac relay.
+**[Get started](docs/getting-started.md)** · **Communication specification: [English](docs/communication-spec.md) / [日本語](docs/communication-spec.ja.md)**
 
-The schedule and message buttons are entry points for queries. The device alone does not complete integration with calendars or every messaging service; a destination and instructions on the Dot side are required. This board has no microphone, and voice input is not implemented.
+## On the device
 
-## Target hardware
+- Your own animated character. Tilt the screen to move it left or right; place it flat to bring it back to the left. Tap the character to wave.
+- Short Japanese summaries in a speech bubble. The bubble uses the opposite side of the screen, hides during movement, and reappears when the character settles. Tap the bubble to hide or show it.
+- Touch answers with up to four choices, displayed two at a time. The question scrolls on the left; answer buttons stay on the right. One tap returns HOME immediately, with persistence and delivery handled by the background task.
+- Icon menus, page navigation, and saved light/dark themes. Connection indicators stay small; detailed diagnostics are available over serial.
 
-The current hardware target is **Waveshare ESP32-C6-Touch-LCD-1.47**. It uses a 320×172 landscape display, touch input, a QMI8658 IMU, and 8MB of flash. Other ESP32 boards are not expected to work unchanged. For a port, adapt the display driver, pins, touch coordinates, IMU axes, and flash capacity.
+The target is **Waveshare ESP32-C6-Touch-LCD-1.47**: a 320×172 landscape touch display, QMI8658 IMU, and 8 MB of flash. It has no microphone; voice input is not implemented. Other boards need changes to drivers, pins, sensor axes, touch coordinates, and memory layout. [Manufacturer documentation](https://docs.waveshare.com/ESP32-C6-Touch-LCD-1.47) · [Firmware details](firmware/README.md)
 
-[Board documentation from the manufacturer](https://docs.waveshare.com/ESP32-C6-Touch-LCD-1.47) / [Pins and firmware](firmware/README.md)
+## Two complementary communication paths
 
-## Reading order
+The ESP32 connects outward over Wi-Fi and HTTPS. In direct mode, it runs both the project's tunnel client and device MCP implementation, so a Mac relay and a public listener on the device are unnecessary.
 
-1. [Getting started](docs/getting-started.md): Requirements, local configuration, asset preparation, build, and flashing.
-2. [Architecture and communication flow](docs/architecture.md): How a question arrives from the Dot and an answer returns, with a map of the source files to read.
-3. [Instruction template for the Dot](docs/dot-instructions.md): Summaries, choices, answer receipt, and what to do when a connection cannot be made.
-4. [Replacing the character](docs/character-assets.md): Sprite dimensions and four animation slots.
-5. [Troubleshooting](docs/troubleshooting.md): Isolating Wi-Fi, reception, answer delays, tilt, and power issues. [Accepted events and unavailable Dot chat](docs/event-delivery-troubleshooting.md): Tracing receiver and conversation delivery separately.
-6. [Third-party libraries and sources](docs/third-party-inventory.md) / [Remaining public-release work](docs/public-readiness.md).
-
-Several of the linked guides remain in Japanese.
-
-## Connection model
+| Path | Role in this project |
+| --- | --- |
+| **Secure MCP Tunnel** | Carries tool calls and their results: publish a summary or question, read a saved answer, record a receipt, and inspect status. Event discovery and subscription methods use this same MCP route. |
+| **MCP Events** | Sends a signed `device.answer` webhook from the ESP32 to ChatGPT's event receiver. The notification triggers the subscribed Dot to read and process the answer. |
 
 ```mermaid
 flowchart LR
-    Dot[Dot / Regular chat] -->|MCP tool call| Tunnel[Secure MCP Tunnel]
-    Device[ESP32 / Display and touch] -->|Fetch requests and send responses over HTTPS| Tunnel
-    Device -->|Answer event / webhook| Events[ChatGPT event receiver]
-    Events --> Dot
+    Dot[Dot / ordinary chat] -->|MCP requests| Tunnel[Secure MCP Tunnel]
+    Device[ESP32 / device MCP implementation] -->|Outbound HTTPS polling and results| Tunnel
+    Tunnel -->|Queued MCP requests in poll response| Device
+    Tunnel -->|Tool results| Dot
+    Device -->|Signed device.answer webhook| Events[ChatGPT MCP Events receiver]
+    Events -->|Subscribed event task| Dot
 ```
 
-This setup lets you continue a normal conversation with the Dot while separately sending short summaries and multiple-choice questions to the device. Merely displaying JSON in the chat does not deliver it to the device. The Dot side must call the device tools and subscribe to answer events.
+MCP Events complements the tunnel: it provides the notification that an answer is ready. The Dot then reads the persisted answer through the tunnel. A webhook's HTTP success means the event was accepted, not that the Dot has replied in chat or recorded a receipt.
 
-Review the official requirements for [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels) and [MCP Events](https://developers.openai.com/plugins/build/mcp-events). A personal connection through a tunnel is separate from a publicly distributed plugin. The intended use is for each person to run the public source through their own tunnel.
+The firmware contains a custom ESP32 tunnel client; it does not run the official desktop `tunnel-client` binary. Review the official [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels) and [MCP Events](https://developers.openai.com/plugins/build/mcp-events) requirements. Each builder uses their own tunnel and connection. Publishing this source does not distribute a public ChatGPT plugin; the tunnel service is for private connections, including developer-mode testing.
 
-## Current status and limitations
+## Chat → device → chat
 
-On the physical device, we have confirmed the round trip in which a normal Dot sends a question, a physical button provides the answer, and the peer receives it. However, there is no guarantee that every conversation will be delivered to the device automatically, or that response times will meet a particular target.
+1. The Dot replies in ordinary chat, then calls `device_publish_summary` for a short device summary. When a real choice is needed, it calls `device_publish_question` instead.
+2. The ESP32 receives the tool request through its HTTPS poll and displays the summary or question.
+3. A choice tap returns HOME immediately. The background task saves the answer in NVS before waiting for Wi-Fi or a valid clock, then sends `device.answer` when delivery is possible.
+4. The subscribed Dot receives the event, calls `device_read_answer` for that question, and matches the question, choice, and request IDs to the question it published.
+5. The Dot acknowledges the answer in ordinary chat and calls `device_record_receipt`. Later conversation summaries can update the device again.
 
-Operation from USB power and stable operation on battery alone are separate validations. The problem of the device crashing when connected to Wi-Fi on battery power alone remains unresolved.
+For example, the arguments to `device_publish_question` are:
 
-You can start by building with the bundled demo character and configuration example in [Getting started](docs/getting-started.md). Import your own character with the converter described in [Replacing the character](docs/character-assets.md); keep private artwork and configuration in local ignored paths. The Japanese atlas is derived from Noto Sans CJK JP and distributed under the [OFL terms](licenses/NotoSansCJK-OFL.txt).
+```json
+{
+  "question_id": "demo-drink-001",
+  "text": "今飲むならどっち？",
+  "choices": [
+    {"id": "coffee", "label": "コーヒー"},
+    {"id": "tea", "label": "お茶"}
+  ]
+}
+```
 
-The original code, documentation, and generated demo character are licensed under [MIT](LICENSE). Review the [respective terms](THIRD_PARTY_NOTICES.md) for dependencies and fonts. Documentation for the old Mac relay path remains available, but new setups should begin with the direct HTTPS getting-started guide.
+This JSON belongs in a tool call, not in the chat reply. The device does not parse the ordinary chat transcript. The [English specification](docs/communication-spec.md) / [日本語の仕様](docs/communication-spec.ja.md) includes the sequence diagram, tool and event examples, ID mapping, persistence, retry limits, and receipt semantics.
+
+## Build your own
+
+1. **Prepare the board and demo.** Follow [Getting started](docs/getting-started.md) for the pinned libraries, bundled procedural character, configuration examples, build, and USB flashing. Start on USB power.
+2. **Connect your Dot.** Create your own tunnel and runtime key, configure Wi-Fi locally, and connect the device tools in the intended ChatGPT workspace. Platform tunnel permissions and ChatGPT workspace permissions are separate.
+3. **Enable answer events.** Discover and subscribe to `device.answer` in the intended Dot, verify the callback, and retain the subscription. Tool access alone does not enable event-triggered replies; the example `DIRECT_SUB` value `{}` does not create a subscription.
+4. **Give the Dot both instructions.** Use the [instruction template](docs/dot-instructions.md) for ordinary-chat summaries/questions and event-triggered answer handling. Keep device JSON out of chat. Skip unavailable-device operations quietly while continuing the conversation.
+5. **Verify the whole loop.** Use the [normal-chat acceptance procedure](docs/normal-chat-device-flow.md): question display, answer persistence, event delivery, Dot acknowledgement, matching receipt, and a subsequent new summary.
+6. **Replace the demo character.** Ask your Dot to prepare a sprite sheet and manifest in the [supported format](docs/character-assets.md), then import them with the converter. Keep private artwork and configuration in ignored local paths; the public demo needs no private character assets.
+
+The schedule and message buttons are query entry points. Calendar and messaging access must be supplied by your Dot's own connected tools and instructions; the device itself does not implement those service integrations.
+
+## Status and practical limits
+
+- The direct question → persisted answer → MCP Events → Dot chat acknowledgement → matching device receipt route has been exercised on hardware with a serial-injected diagnostic tap. This is separate from physical-touch acceptance on your own board.
+- Summaries and questions depend on the Dot calling tools. Saved instructions are not a hook that captures every chat reply, and chat delivery and device delivery are separate operations rather than guaranteed parallel execution.
+- The firmware retains one current question/answer and one subscription/outbox. Retries are bounded; a recorded selection, accepted webhook, and Dot receipt are different states. There is no guaranteed response time or exactly-once conversation processing.
+- Intermittent Wi-Fi authentication delays remain under investigation. Serial `health` reports startup connection milestones, reconnect counters, sensor initialization, and minimum heap. The [connection tracer](docs/troubleshooting.md#接続状態を連続記録する) records their changes without requesting a reset or reconnect.
+- **Battery-only Wi-Fi stability remains unresolved.** USB operation and battery-side ADC measurements do not prove battery-only stability.
+
+## Documentation and licensing
+
+| Guide | Use it for |
+| --- | --- |
+| [Communication specification — English](docs/communication-spec.md) / [日本語](docs/communication-spec.ja.md) | Protocol roles, diagrams, JSON, subscriptions, and delivery semantics |
+| [Getting started](docs/getting-started.md) | Environment, assets, configuration, build, and flashing |
+| [Architecture](docs/architecture.md) | Firmware modules, UI, sensors, and networking |
+| [Dot instructions](docs/dot-instructions.md) | Conversation summaries, questions, and answer handling |
+| [Character assets](docs/character-assets.md) / [Font assets](docs/font-assets.md) | Custom sprites and Japanese font generation |
+| [Troubleshooting](docs/troubleshooting.md) | Device health, Wi-Fi, input, and power diagnosis |
+| [Event delivery troubleshooting](docs/event-delivery-troubleshooting.md) | Accepted events, question provenance, and owner-conversation delivery |
+| [Third-party inventory](docs/third-party-inventory.md) / [Public readiness](docs/public-readiness.md) | Dependencies and remaining release work |
+
+Several implementation and setup guides are currently in Japanese. The old [Mac relay](bridge/README.md) remains a separate legacy development/recovery path; new setups should start with direct HTTPS.
+
+Original code, documentation, and the procedural demo are [MIT-licensed](LICENSE). The Japanese atlas is derived from Noto Sans CJK JP under the [OFL](licenses/NotoSansCJK-OFL.txt). Dependencies retain their own [licenses and notices](THIRD_PARTY_NOTICES.md).
