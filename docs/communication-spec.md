@@ -29,7 +29,7 @@ flowchart LR
   U -->|answer selected| S[sign + HTTPS webhook]
   S --> E[MCP Events receiver]
   E -->|invoke subscribed Dot| D
-  D -->|device_read_answer, then normalchatnotify and device_record_receipt| T
+  D -->|device_read_answer and device_record_receipt| T
   T --> P
   D -.->|optional separate summary| T
 ```
@@ -42,23 +42,29 @@ sequenceDiagram
   participant Tunnel
   participant ESP as ESP32
   participant Events as Events receiver
-  Dot->>Tunnel: device_publish_question
-  Tunnel->>ESP: JSON-RPC over queued poll
-  ESP-->>Tunnel: pending result (same tunnel)
-  Tunnel-->>Dot: tool result
+  Dot->>Tunnel: queue device_publish_question
+  ESP->>Tunnel: outbound HTTPS poll
+  Tunnel-->>ESP: queued JSON-RPC request
+  ESP->>Tunnel: tool result post
+  Tunnel-->>Dot: pending result
   ESP->>ESP: render question; one tap selects a choice
   ESP->>ESP: return HOME; persist answer asynchronously in NVS
   ESP->>Events: signed device.answer webhook (bounded outbox)
   Events->>Dot: invoke subscribed Dot
-  Dot->>Tunnel: device_read_answer(question_id)
-  Tunnel->>ESP: JSON-RPC poll
-  ESP-->>Tunnel: real answer, IDs, request_id
+  Dot->>Tunnel: queue device_read_answer(question_id)
+  ESP->>Tunnel: outbound HTTPS poll
+  Tunnel-->>ESP: queued JSON-RPC request
+  ESP->>Tunnel: real answer result post
   Tunnel-->>Dot: answer result
-  Dot->>Dot: normalchatnotify in ordinary chat
-  Dot->>Tunnel: device_record_receipt
-  Tunnel->>ESP: JSON-RPC poll
-  ESP-->>Tunnel: received result
+  Dot->>Dot: acknowledge in ordinary chat
+  Dot->>Tunnel: queue device_record_receipt
+  ESP->>Tunnel: outbound HTTPS poll
+  Tunnel-->>ESP: queued JSON-RPC request
+  ESP->>Tunnel: received result post
   Tunnel-->>Dot: receipt result
+  Dot->>Tunnel: optional separate device_publish_summary
+  ESP->>Tunnel: outbound HTTPS poll, then result post
+  Tunnel-->>Dot: summary result
 ```
 
 ## State and safety boundaries
@@ -67,13 +73,14 @@ The firmware retains one current question, one answer, one summary display,
 one Events subscription, and one event outbox. It is not an unlimited answer
 log. A selected answer without a receipt blocks a new question. Repeating the
 same question ID with identical text and choices is idempotent; changing its
-content is a conflict. A summary can be sent separately, but it is not a
-replacement for an unanswered question. The Dot instruction protects an
-unanswered question/summary from being overwritten; that safeguard is an
-instruction, not a firmware invariant, so a pending question can technically
-be replaced.
+  content is a conflict. A summary can be sent separately, but it is not a
+  replacement for an unanswered question. The Dot instruction protects an
+  unanswered question from replacement and keeps summaries from covering it;
+  that safeguard is an instruction, not a firmware invariant, so both a
+  pending question and its display can technically be replaced.
 
-Selection validates the question ID and choice ID, marks the answer `real`,
+Selection validates the non-empty question ID and choice ID, marks the answer
+`real`,
 and keeps `interaction_id`, `choice_id`, and `request_id`. The UI returns HOME
 immediately. The answer NVS write is performed by the answer task before Wi-Fi
 and clock gates allow network delivery; this is not a synchronous UI durability
@@ -86,6 +93,8 @@ to 128 and 4096 UTF-8 bytes respectively. Each choice has a unique `id` of at
 most 48 bytes and a non-empty `label` of at most 128 bytes. Summary ID is at
 most 128 bytes; summary text is non-empty and at most 24 Unicode code points
 (not bytes). The firmware stores only the current values.
+These are validation limits, not a guaranteed visual fit; keep prompts and
+choice labels short for the 320×172 screen.
 
 ## MCP tools
 
@@ -93,7 +102,7 @@ most 128 bytes; summary text is non-empty and at most 24 Unicode code points
 | --- | --- | --- |
 | `device_publish_question` | `question_id`, `text`, `choices:[{id,label}]` | Stores a pending real question. Same ID and same content is idempotent; an unreceipted answer returns `Previous answer awaits receipt`. |
 | `device_publish_summary` | `summary_id`, `text` | Stores and displays a short summary. Same ID/content is idempotent; it does not acknowledge an answer. |
-| `device_read_answer` | Optional `question_id` | Returns the current answer only when the scope matches. Dot must validate `source: real`, IDs, and its own published question. |
+| `device_read_answer` | Optional `question_id` | Returns the current answer only when the scope matches. Dot must validate `source: real`, IDs, and its own published question. `source: real` identifies the firmware path; it does not prove a physical tap (serial injection can use the same path). |
 | `device_record_receipt` | `interaction_id`, `choice_id`, `receipt_id`, `summary` | Persists a matching receipt. Repeating the same receipt is idempotent; a different receipt conflicts. |
 | `device_status` | No arguments | Reports direct transport status and Events counters/outbox state. It does not prove Dot processing or chat delivery. |
 
@@ -124,10 +133,16 @@ Summary tool call (separate from the question):
 {"summary_id":"chat-001","text":"Meeting moved to 3pm"}
 ```
 
-Read-answer result after a real tap:
+Read-answer request (tool arguments):
 
 ```json
-{"interaction_id":"demo-food-001","choice_id":"ramen","request_id":"req-001","source":"real","receipt_id":null}
+{"question_id":"demo-food-001"}
+```
+
+Read-answer result (`structuredContent`, not a full JSON-RPC envelope):
+
+```json
+{"answers":[{"interaction_id":"demo-food-001","choice_id":"ramen","request_id":"req-001","source":"real","receipt_id":null}]}
 ```
 
 Receipt tool call:
@@ -148,9 +163,11 @@ The signed `device.answer` webhook has a payload equivalent to:
 }
 ```
 
-The firmware signs the canonical JSON payload with the provisioned webhook
-secret. The receiver must verify the callback signature before invoking the
-subscribed Dot.
+The firmware signs the exact serialized request bytes using the Standard
+Webhooks HMAC-SHA256 scheme and the provisioned webhook secret. The receiver
+must verify `Content-Type`, `webhook-id` (matching `eventId`),
+`webhook-timestamp`, `webhook-signature`, and `X-MCP-Subscription-Id` before
+invoking the subscribed Dot.
 
 ## MCP Events subscription and delivery
 
@@ -166,11 +183,15 @@ An empty `DIRECT_SUB={}` is setup scaffolding, not an active subscription.
 One selected answer occupies the outbox. Delivery is attempted at most five
 times. Retry delays are exponential (2, 4, 8, and 16 seconds after attempts);
 the event ID remains stable while each attempt has a fresh signing timestamp.
-Permanent client failures, expiry, revocation, or the fifth failed attempt
-become terminal. An HTTP 2xx means the callback accepted the request only. It
+Expiry or unsubscribe marks an active outbox `revoked`; permanent delivery
+failures and the fifth failed attempt become `terminal`. HTTP 408 and 429 are
+retryable exceptions to the otherwise terminal 4xx policy. An HTTP 2xx means
+the callback accepted the request only. It
 does not prove that a receiver ran, that Dot read the answer, that
-`normalchatnotify` reached ordinary chat, or that a receipt was persisted.
-There is no exact-once guarantee; deduplicate by `eventId`/`answerId` and the
+ordinary-chat acknowledgement reached its destination, or that a receipt was
+persisted. Pending local outbox retries remain possible even though event
+listing uses `cursor: null` and provides no replay. There is no exact-once
+guarantee; deduplicate by `eventId`/`answerId` and the
 stable request tuple.
 
 ## Startup and setup checklist
@@ -184,7 +205,7 @@ stable request tuple.
 3. Configure and verify a persistent `device.answer` MCP Events subscription,
    callback challenge/signature checks, expiration refresh, and `cursor: null`.
 4. Give the Dot the [instruction template](dot-instructions.md), including the
-   event handler: read the answer first, notify ordinary chat, then record a
+   event handler: read the answer first, acknowledge it in ordinary chat, then record a
    receipt through the Tunnel. Keep optional summaries on their own path.
 5. Run the synthetic two-choice round trip and correlate question/interaction
    ID, choice ID, request ID, event ID, HTTP result, Dot read, chat notice, and
