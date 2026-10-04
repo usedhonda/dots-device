@@ -806,13 +806,6 @@ static void directTask() {
   directTunnel=new KaiDirectTunnel("https://api.openai.com",DIRECT_KEY,DIRECT_ID,DIRECT_CA,measurementBootId);
   uint32_t wifiAttempt=millis(),lastDiagnostic=0;
   for(;;) {
-    if(WiFi.status()!=WL_CONNECTED) {
-      if(!WiFi.STA.connected()&&millis()-wifiAttempt>15000){WiFi.reconnect();wifiAttempt=millis();}
-      xSemaphoreTake(stateLock,portMAX_DELAY);bridgeStatus="offline";xSemaphoreGive(stateLock);
-      vTaskDelay(pdMS_TO_TICKS(500));continue;
-    }
-    wifiAttempt=millis();
-    if(time(nullptr)<1700000000){vTaskDelay(pdMS_TO_TICKS(500));continue;}
     String rid,qid,cid;
     xSemaphoreTake(stateLock,portMAX_DELAY);
     if(choiceSendStatus=="queued") {rid=choiceSendId;qid=choiceSendInteraction;cid=choiceSendValue;}
@@ -824,16 +817,26 @@ static void directTask() {
       if(choiceSendId==rid){choiceSendStatus=saved?"recorded":"stale";choiceTotalMs=millis()-choiceQueuedAt;}
       xSemaphoreGive(stateLock);directRefresh();
     }
-    bool ok=directTunnel->pollOnce([](JsonVariantConst rpc){String answer=directMCP.handle(rpc);directRefresh();return answer;});
+    if(WiFi.status()!=WL_CONNECTED) {
+      if(!WiFi.STA.connected()&&millis()-wifiAttempt>15000){WiFi.reconnect();wifiAttempt=millis();}
+      xSemaphoreTake(stateLock,portMAX_DELAY);bridgeStatus="offline";xSemaphoreGive(stateLock);
+      vTaskDelay(pdMS_TO_TICKS(500));continue;
+    }
+    wifiAttempt=millis();
+    if(time(nullptr)<1700000000){vTaskDelay(pdMS_TO_TICKS(500));continue;}
+    JsonVariantConst answer=directMCP.state["answer"];
+    if(!answer.isNull()&&answer["receipt_id"].isNull())directMCP.events.enqueue(answer["interaction_id"].as<String>(),answer["choice_id"].as<String>(),answer["request_id"].as<String>(),answer["selected_at"].as<int64_t>());
+    directMCP.events.pump();
+    directRefresh();
+    bool answerPending=!answer.isNull()&&answer["receipt_id"].isNull();
+    bool questionPending=directMCP.state["question"]["status"]=="pending";
+    bool ok=directTunnel->pollOnce([](JsonVariantConst rpc){String answer=directMCP.handle(rpc);directRefresh();return answer;},(questionPending||answerPending)?1000:5000);
     auto status=directTunnel->status();
     xSemaphoreTake(stateLock,portMAX_DELAY);
     lastHttpCode=status.httpCode;
     if(ok){lastBridgeMs=millis();bridgeStatus="online";stateSuccesses++;}
     else {stateFailures++;bridgeStatus=(lastBridgeMs&&millis()-lastBridgeMs<15000)?"online":"offline";}
     xSemaphoreGive(stateLock);
-    JsonVariantConst answer=directMCP.state["answer"];
-    if(!answer.isNull()&&answer["receipt_id"].isNull())directMCP.events.enqueue(answer["interaction_id"].as<String>(),answer["choice_id"].as<String>(),answer["request_id"].as<String>(),answer["selected_at"].as<int64_t>());
-    directMCP.events.pump();
     directRefresh();
     if(millis()-lastDiagnostic>10000){lastDiagnostic=millis();Serial.printf("{\"type\":\"direct\",\"http\":%d,\"polls\":%lu,\"commands\":%lu,\"responses\":%lu,\"failures\":%lu,\"heap\":%u,\"min_heap\":%u}\n",status.httpCode,(unsigned long)status.polls,(unsigned long)status.commands,(unsigned long)status.delivered,(unsigned long)status.failures,ESP.getFreeHeap(),ESP.getMinFreeHeap());}
     ulTaskNotifyTake(pdTRUE,pdMS_TO_TICKS(ok?100:3000));
