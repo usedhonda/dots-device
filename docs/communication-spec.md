@@ -226,3 +226,11 @@ stable request tuple.
    require an independent test.
 
 For troubleshooting, see [event delivery troubleshooting](event-delivery-troubleshooting.md).
+
+## On-device diagnostics
+
+Settings has Theme, Status, Answer and Log tabs. Monitoring tabs stay open instead of returning home after inactivity. Status separates Wi-Fi RSSI, tunnel connectivity/HTTP and summary reception age; Answer separates the question, Events outbox and Dot receipt. Log shows disconnect/reconnect counts and the latest meaningful tool outcome, rather than a full history.
+
+`device_status` and USB `diagnostics` expose `display_kind`, `summary_id`, `question_status`, `answer_pending_receipt`, `successful_summary_count`, `last_summary_ms`, `last_summary_age_ms`, `last_summary_time_status`, and the latest tool name/result/uptime/age. Summary counts and tool timestamps are RAM-only; after reboot summary timing is `unknown_after_restart` with null timestamps. Existing persisted display/receipt state is retained. Status/read polling does not replace the meaningful tool record. Diagnostics exclude message text, arguments and credentials. USB also reports Wi-Fi disconnect metadata and tunnel age; a null tunnel age means no successful poll since boot.
+
+A successful tool response is distinct from an independently observed framebuffer update. An Events outbox marked `sent` is distinct from a matching Dot receipt. If summaries stay stale with an online tunnel, inspect whether the Dot actually called `device_publish_summary`; saved instructions alone do not force a call on every reply.
