@@ -10,7 +10,7 @@ program = """
 #include <cassert>
 uint32_t clockMs, now, lastTouchMs;
 uint32_t millis(){return clockMs;}
-int page=1, HOME=0, targetPage=1, MAX_PAGE=4;
+int page=1, HOME=0, SETTINGS=4, settingsView=0, targetPage=1, MAX_PAGE=4;
 bool fingerDown=false, settling=false, returned=false;
 void slideTo(int){returned=true;}
 void check(){GUARD}
@@ -27,6 +27,9 @@ int main(){
  targetPage=3;scenario(1000,1000,61001,false);
  scenario(1000,1000,3601000,false);
  fingerDown=true;scenario(1000,1000,61001,false);
+ fingerDown=false;page=SETTINGS;targetPage=MAX_PAGE;settingsView=1;
+ scenario(1000,1000,61001,false);
+ settingsView=0;scenario(1000,1000,61001,true);
 }
 """.replace("GUARD", guard)
 with tempfile.TemporaryDirectory() as directory:
