@@ -39,6 +39,18 @@ Wi-Fi 再接続を繰り返す場合、同じ箇所を再起動する前に `mea
 
 Mac の HTTP ブリッジはレガシー/ローカル復旧経路です。直接 HTTPS/MCP が有効なビルドでは `bridgeTask` が直接 poll とイベント送信を担当し、Mac の `/state` や `/choice` と同じ遅延・状態機械ではありません。ログに「Mac への接続を待っています」と出ても、直接経路の enrollment や TLS の状態を表すとは限りません。ブリッジを使う場合だけ [`bridge/README.md`](../bridge/README.md) の認証済みローカル手順を使い、直接経路の成功証拠として再利用しないでください。
 
+## 接続状態を連続記録する
+
+既存のシリアル利用を終了してから、リポジトリ直下で次のヘルパーを実行します。出力は ignored の `.local/` に保存します。既存ファイルは上書きしないため、再取得時は別名を指定します。
+
+```sh
+python3 tools/trace_connection.py --port /dev/cu.usbmodem1101 --seconds 180 --output .local/connection-trace.jsonl
+```
+
+ヘルパーは raw descriptor を一度だけ開き、DTR/RTS や termios を変更しません。開始時に `health`、`link`、`power`、以後5秒ごとに `health` と `link` を要求し、安全な診断項目だけをホスト側の経過秒 `elapsed_s` とともに記録します。生ログ、質問内容、認証値は出力しません。端末のリセット、再接続操作、ファームウェア変更は行いません。
+
+USB を開くだけでも ESP32-C6 がリセットされる可能性があるため、取得前の uptime と記録中の `uptime_ms` の連続性を確認します。`polls`、`failures`、`wifi_disconnect_count`、`touch_samples` などの件数は累積値です。同じ起動区間の差分を比較し、リセットをまたいで増減を計算しないでください。`wifi_status` と `direct` の HTTP・poll件数の変化を並べると、Wi-Fi 接続とトンネル通信の進行を分けて見られます。USB 接続中の `battery_mv` は ADC の推定値であり、電池だけでの安定稼働の証拠にはなりません。
+
 ## 診断の意味と限界
 
 シリアル `health` は端末の状態、`link` は通信タスクの集計、`interaction` は画面と回答キュー、`measurements` はリセット前後の電源・無線の手掛かりです。いずれもサービス側の会話内容や receipt を代替しません。実機での一回のタップ、イベント配送、サービス処理、receipt 反映を同じ ID で追跡できた場合だけ、端末からサービスまでの end-to-end 成功として記録します。
