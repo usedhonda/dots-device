@@ -1,0 +1,60 @@
+name: Firmware
+on: [push, pull_request]
+permissions:
+  contents: read
+concurrency:
+  group: firmware-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Scan source history for secrets
+        run: |
+          mkdir -p .local/security-tools
+          cd .local/security-tools
+          curl -fLO https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          curl -fLO https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_checksums.txt
+          sha256sum --ignore-missing --check gitleaks_8.30.1_checksums.txt
+          tar -xzf gitleaks_8.30.1_linux_x64.tar.gz gitleaks
+          ./gitleaks git ../.. --redact --no-banner
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - uses: arduino/setup-arduino-cli@81d310742121c928ea9c8bbd407b4217b432ae02 # v2.0.0
+        with:
+          version: '1.5.1'
+      - name: Install documented dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          python tools/setup_vendor.py
+          arduino-cli config set directories.user "$HOME/Arduino"
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.3.1
+          arduino-cli lib install "U8g2@2.36.19" "ArduinoJson@7.4.3"
+      - name: Generate safe demo inputs
+        run: |
+          python tools/prepare_demo_character.py --output-dir .local/characters/demo/source
+          python tools/prepare_assets.py .local/characters/demo/source .local/characters/demo/generated/kai_assets.h
+          ln -s ../../.local/characters/demo/generated/kai_assets.h firmware/kai_companion/kai_assets.h
+          python tools/prepare_action_icons.py
+          cp examples/private_config.example.h firmware/kai_companion/private_config.h
+          cp examples/direct_private_config.example.h firmware/kai_companion/direct_private_config.h
+      - name: Check protected behavior
+        run: |
+          python tools/test_prepare_assets.py
+          python tools/test_answer_tap.py
+          python tools/test_idle_timeout.py
+          python tools/test_direct_summary.py --arduinojson "$HOME/Arduino/libraries/ArduinoJson/src"
+          python tools/test_connection_recovery.py
+          c++ -std=c++17 tools/test_bubble_layout.cpp -o /tmp/test-bubble
+          /tmp/test-bubble
+          c++ -std=c++17 tools/test_gravity_motion.cpp -o /tmp/test-gravity
+          /tmp/test-gravity
+      - name: Compile ESP32-C6 demo
+        run: >-
+          arduino-cli compile -b esp32:esp32:esp32c6:CDCOnBoot=cdc,FlashSize=8M,PartitionScheme=default_8MB
+          --libraries .local/vendor/Arduino/libraries --build-path build firmware/kai_companion

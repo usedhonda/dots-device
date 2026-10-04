@@ -1,0 +1,8 @@
+# KAI action icons
+
+Generated with the built-in Imagegen tool. Source atlas: `action-icons-v1.png`.
+The firmware renders the Japanese labels separately at 16px for readability.
+
+## Prompt
+
+Use case: ui-mockup. Asset type: production sprite atlas of six illustrated action icons for a tiny 320x172 KAI companion touchscreen. Create ONE coherent sprite sheet, portrait aspect ratio 2:3, exactly 2 columns by 3 rows of equal square cells, six icons with generous transparent padding; transparent background throughout. Each icon centered precisely in its own cell, about 65 percent of cell width/height, no overlap. Reading order: top-left a folded news bulletin with three chunky blue lines and a yellow notification dot (current status); top-right a magnifying glass over a simple document (details); middle-left two overlapping speech bubbles, blue and yellow (ask); middle-right a small open app window with an arrow coming out to upper-right (open chat); bottom-left a blue round timer with one yellow hand (focus); bottom-right two chunky blue curved arrows forming a refresh circle (refresh). Art direction: friendly premium pocket-toy UI, crisp hand-drawn flat illustrations, bold dark navy outlines, rounded corners, sky blue and warm gold accents, simple silhouettes that remain unmistakable at 40x40 pixels. Very few interior details, no thin lines. Consistent scale and perspective. No characters, no faces, no words, no letters, no numerals, no labels, no card rectangles, no outer borders, no grid lines, no drop shadows, no photorealism. The device will render large Japanese labels separately underneath these icons. Return the transparent atlas only.

@@ -1,0 +1,3 @@
+Pillow>=12.1
+# Optional diagnostics only; the firmware build does not require pyserial.
+# pyserial>=3.5

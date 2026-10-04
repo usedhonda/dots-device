@@ -1,0 +1,15 @@
+.local/
+firmware/**/private_config.h
+firmware/**/kai_assets.h
+build/
+__pycache__/
+*.pyc
+.DS_Store
+docs/log/
+firmware/**/button_assets.h
+
+firmware/**/direct_private_config.h
+work/
+
+# Generated framebuffer captures; curated tracked snapshots remain.
+previews/*.png
